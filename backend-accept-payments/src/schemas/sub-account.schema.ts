@@ -18,6 +18,12 @@ export class SubAccount {
 
   @Prop({ required: true, type: Number })
   derivationCounter: number;
+
+  @Prop({ required: true, type: String })
+  address: string;
+
+  @Prop()
+  balance: string;
 }
 
 export const SubAccountSchema = SchemaFactory.createForClass(SubAccount);

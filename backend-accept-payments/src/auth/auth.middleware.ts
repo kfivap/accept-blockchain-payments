@@ -26,17 +26,6 @@ export class AuthMiddleware implements NestMiddleware {
       );
       const [login, password] = credentials.split(':');
 
-      //   const userExists = await this._userModel.findOne({ login });
-      //   if (userExists) {
-      //     const phraseOk = decryptSeedPhrase(
-      //       userExists.encryptedPhrase,
-      //       password,
-      //     );
-      //     if (phraseOk) {
-      //       // Set the authenticated user on the request object
-      //       req.user = userExists;
-      //     }
-      //   }
       const userExists = await this._userModel.findOne({ login });
       if (!userExists) {
         throw new NotFoundException('User not found');
@@ -46,6 +35,7 @@ export class AuthMiddleware implements NestMiddleware {
         throw new UnauthorizedException('Bad password');
       }
       req.user = userExists;
+      req.seedPhrase = phraseOk;
     }
 
     next();

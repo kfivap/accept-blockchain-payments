@@ -24,6 +24,10 @@ export class RestApiController {
 
   @Get('sub_account')
   async getSubAccount(@Query() query: GetSubAccountDto, @Request() request) {
-    return await this._userService.getSubAccount(query, request.user);
+    return await this._userService.getSubAccount(
+      query,
+      request.user,
+      request.seedPhrase,
+    );
   }
 }
