@@ -74,7 +74,7 @@ export class UserService {
       identifier,
       blockchain,
       derivationCounter,
-      address,
+      address: address.toLocaleLowerCase(),
     });
     await createdSubAccount.save();
     return createdSubAccount;
