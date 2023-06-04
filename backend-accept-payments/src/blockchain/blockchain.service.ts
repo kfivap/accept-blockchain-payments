@@ -1,21 +1,22 @@
 import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { SubAccount } from '../schemas/sub-account.schema';
+import { SubAccount, SubAccountDocument } from '../schemas/sub-account.schema';
 import { ethers } from 'ethers';
 import { LastProcessedBlock } from 'src/schemas/last-processed-block.schema';
 import { BlockchainEnum } from 'src/enums/blockchain.enum';
-import { ProcessedTx } from 'src/schemas/processed-tx.schema';
+import { BlockchainTx } from 'src/schemas/blockchain-tx.schema';
 import { TokenEnum } from 'src/enums/tokens.enum';
 import { TransactionResponse } from '@ethersproject/abstract-provider';
-import { tokenConfigRow, tokensConfig } from 'src/config/config';
+import { tokenConfigRow, tokensConfigByAddress } from 'src/config/config';
+import { UserDocument } from 'src/schemas/user.schema';
 
 @Injectable()
 export class BlockchainService implements OnApplicationBootstrap {
   constructor(
     @InjectModel(SubAccount.name) private _subAccountModel: Model<SubAccount>,
-    @InjectModel(ProcessedTx.name)
-    private _processedTxModel: Model<ProcessedTx>,
+    @InjectModel(BlockchainTx.name)
+    private _blockchainTxModel: Model<BlockchainTx>,
     @InjectModel(LastProcessedBlock.name)
     private _lastProcessedBlockModel: Model<LastProcessedBlock>,
   ) {}
@@ -26,7 +27,6 @@ export class BlockchainService implements OnApplicationBootstrap {
   }
 
   async fetchEthTransactions(blockchain: BlockchainEnum) {
-    // todo if block less than 6 confirmations, sleep
     const provider = new ethers.providers.JsonRpcProvider(
       process.env[`${blockchain}_RPC_ENDPOINT`],
     );
@@ -69,7 +69,7 @@ export class BlockchainService implements OnApplicationBootstrap {
               if (!tx.to) {
                 continue;
               }
-              const erc20 = tokensConfig[tx.to.toLocaleLowerCase()];
+              const erc20 = tokensConfigByAddress[tx.to.toLocaleLowerCase()];
               if (erc20) {
                 await this._handleErc20(blockchain, tx, erc20);
               } else {
@@ -92,12 +92,14 @@ export class BlockchainService implements OnApplicationBootstrap {
     blockchain: BlockchainEnum,
     tx: TransactionResponse,
   ) {
-    const isNativeTransferToUs = await this._subAccountModel.findOne({
+    const ourSubAccount = await this._subAccountModel.findOne({
       blockchain,
       address: tx.to.toLocaleLowerCase(),
     });
-    if (isNativeTransferToUs) {
+    if (ourSubAccount) {
       await this._saveTx({
+        subAccount: ourSubAccount,
+        user: ourSubAccount.user,
         blockchain,
         token: TokenEnum.NATIVE_BNB,
         amount: tx.value.toString(),
@@ -116,6 +118,7 @@ export class BlockchainService implements OnApplicationBootstrap {
     const isTransferFrom = methodHash === '0x23b872dd';
 
     let amountToSave;
+    let assetsTo;
     if (isTransfer) {
       const transferIface = new ethers.utils.Interface([
         'function transfer(address,uint256)',
@@ -125,6 +128,7 @@ export class BlockchainService implements OnApplicationBootstrap {
       });
 
       if (parsedTransferData && parsedTransferData.name === 'transfer') {
+        assetsTo = parsedTransferData.args[0].toString();
         amountToSave = parsedTransferData.args[1].toString();
       }
     } else if (isTransferFrom) {
@@ -139,6 +143,7 @@ export class BlockchainService implements OnApplicationBootstrap {
         parsedTransferFromData &&
         parsedTransferFromData.name === 'transferFrom'
       ) {
+        assetsTo = parsedTransferFromData.args[1].toString();
         amountToSave = parsedTransferFromData.args[2].toString();
       }
     }
@@ -148,12 +153,20 @@ export class BlockchainService implements OnApplicationBootstrap {
       if (!success) {
         console.log(`tx ${tx.hash} is no success, skip`);
       }
-      await this._saveTx({
+      const ourSubAccount = await this._subAccountModel.findOne({
         blockchain,
-        token: token.name,
-        txHash: tx.hash,
-        amount: amountToSave,
+        address: assetsTo.toLocaleLowerCase(),
       });
+      if (ourSubAccount) {
+        await this._saveTx({
+          subAccount: ourSubAccount,
+          user: ourSubAccount.user,
+          blockchain,
+          token: token.name,
+          txHash: tx.hash,
+          amount: amountToSave,
+        });
+      }
     }
   }
 
@@ -168,15 +181,24 @@ export class BlockchainService implements OnApplicationBootstrap {
     }
   }
 
-  private async _saveTx(data: ProcessedTx) {
-    const { blockchain, token, txHash: _txHash, amount } = data;
+  private async _saveTx(data: BlockchainTx) {
+    const {
+      blockchain,
+      token,
+      txHash: _txHash,
+      amount,
+      subAccount,
+      user,
+    } = data;
     console.log('savetx', data);
     const txHash = _txHash.toLocaleLowerCase();
-    if (await this._processedTxModel.findOne({ txHash })) {
+    if (await this._blockchainTxModel.findOne({ txHash })) {
       console.log('savetx already exists, skip', data);
       return;
     }
-    const createdSubAccount = new this._processedTxModel({
+    const createdSubAccount = new this._blockchainTxModel({
+      subAccount: (subAccount as unknown as SubAccountDocument)._id,
+      user: (user as unknown as UserDocument)._id,
       blockchain,
       token,
       txHash: txHash.toLocaleLowerCase(),
